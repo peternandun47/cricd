@@ -2,8 +2,6 @@
 
 A dynamic, interactive cricket field visualization tool built with Vue 3, TypeScript, and Canvas. This application helps cricket enthusiasts, coaches, and analysts visualize and plan field placements for different game situations.
 
-![Cricket Field Visualizer Screenshot](screenshot.png)
-
 ## Features
 
 ### 1. Interactive Field Visualization
