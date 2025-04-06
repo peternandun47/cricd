@@ -3,6 +3,7 @@ import { FIELD_DIMENSIONS } from '../constants/dimensions'
 import type { FieldingPosition } from '../types/FieldingPosition'
 import { FIELDING_POSITIONS } from '../constants/fieldingPositions'
 import { cartesianToPolar, polarToCartesian, findClosestPosition, getFieldSetting } from '../utils/fieldingUtils'
+import { useMouseTrail } from './useMouseTrail'
 
 export function useCanvas() {
   const canvasRef = ref<HTMLCanvasElement | null>(null)
@@ -12,6 +13,9 @@ export function useCanvas() {
   const positions = ref<FieldingPosition[]>(getFieldSetting('odi_powerplay'))
   const currentPhase = ref<'test_attacking' | 'odi_powerplay' | 'death_overs'>('odi_powerplay')
   const dragOffset = ref({ x: 0, y: 0 })
+  const showDebugBoundaries = ref(true)
+
+  const { addPoint, clearTrail, drawTrail, isFielderDrag } = useMouseTrail(ctx)
 
   const initCanvas = () => {
     if (!canvasRef.value) return
@@ -52,6 +56,7 @@ export function useCanvas() {
 
   const redraw = () => {
     drawField()
+    drawTrail()
     drawPositions()
   }
 
@@ -187,6 +192,237 @@ export function useCanvas() {
     context.restore()
   }
 
+  const getPositionColor = (type: FieldingPosition['type'], side: string) => {
+    // Base colors for different field sections
+    const sectionColors = {
+      // Close-in positions (slips, gully, silly point)
+      close: {
+        off: '#e74c3c', // Red for off-side close positions
+        leg: '#e67e22', // Orange for leg-side close positions
+        neutral: '#f1c40f' // Yellow for neutral close positions
+      },
+      // Inner circle positions (point, cover, mid-off, etc.)
+      inner: {
+        off: '#3498db', // Blue for off-side inner positions
+        leg: '#2ecc71', // Green for leg-side inner positions
+        neutral: '#9b59b6' // Purple for neutral inner positions
+      },
+      // Boundary positions
+      boundary: {
+        off: '#1abc9c', // Teal for off-side boundary positions
+        leg: '#16a085', // Darker teal for leg-side boundary positions
+        neutral: '#27ae60' // Dark green for neutral boundary positions
+      }
+    }
+
+    // Determine the section based on distance
+    const distance = type === 'mandatory' ? 15 : 30 // Default distance for type-based coloring
+    let section: keyof typeof sectionColors = 'inner'
+    
+    if (distance < 20) {
+      section = 'close'
+    } else if (distance > 60) {
+      section = 'boundary'
+    }
+
+    return sectionColors[section][side as keyof typeof sectionColors['close']] || '#95a5a6'
+  }
+
+  const drawPositionBoundary = (position: FieldingPosition, centerX: number, centerY: number) => {
+    if (!ctx.value) return
+    
+    const context = ctx.value
+    const { distance, angle } = position.polar
+    
+    // Normalize angles to ensure proper boundary handling
+    const normalizedMin = angle.min
+    const normalizedMax = angle.max
+    const isBoundaryCrossing = normalizedMin > normalizedMax
+    
+    // Calculate inner and outer radii in pixels
+    const innerRadius = distance.min * FIELD_DIMENSIONS.PIXELS_PER_YARD
+    const outerRadius = distance.max * FIELD_DIMENSIONS.PIXELS_PER_YARD
+    
+    // Get color based on position type and side
+    const fillColor = getPositionColor(position.type, position.side)
+    
+    // Draw the arc sector
+    if (isBoundaryCrossing) {
+      // First arc: from min angle to 360
+      context.beginPath()
+      context.arc(centerX, centerY, innerRadius, (normalizedMin * Math.PI) / 180, 2 * Math.PI)
+      context.arc(centerX, centerY, outerRadius, 2 * Math.PI, (normalizedMin * Math.PI) / 180, true)
+      context.closePath()
+      context.fillStyle = `${fillColor}20`
+      context.fill()
+      
+      // Second arc: from 0 to max angle
+      context.beginPath()
+      context.arc(centerX, centerY, innerRadius, 0, (normalizedMax * Math.PI) / 180)
+      context.arc(centerX, centerY, outerRadius, (normalizedMax * Math.PI) / 180, 0, true)
+      context.closePath()
+      context.fillStyle = `${fillColor}20`
+      context.fill()
+      
+      // Draw boundary line at 0/360
+      context.beginPath()
+      context.moveTo(centerX, centerY - innerRadius)
+      context.lineTo(centerX, centerY - outerRadius)
+      context.strokeStyle = fillColor
+      context.lineWidth = 2
+      context.stroke()
+    } else {
+      context.beginPath()
+      context.arc(centerX, centerY, innerRadius, (normalizedMin * Math.PI) / 180, (normalizedMax * Math.PI) / 180)
+      context.arc(centerX, centerY, outerRadius, (normalizedMax * Math.PI) / 180, (normalizedMin * Math.PI) / 180, true)
+      context.closePath()
+      context.fillStyle = `${fillColor}20`
+      context.fill()
+    }
+    
+    // Draw boundary lines
+    context.strokeStyle = fillColor
+    context.lineWidth = 2
+    
+    // Draw inner and outer arcs
+    if (isBoundaryCrossing) {
+      // First segment
+      context.beginPath()
+      context.arc(centerX, centerY, innerRadius, (normalizedMin * Math.PI) / 180, 2 * Math.PI)
+      context.stroke()
+      context.beginPath()
+      context.arc(centerX, centerY, outerRadius, (normalizedMin * Math.PI) / 180, 2 * Math.PI)
+      context.stroke()
+      
+      // Second segment
+      context.beginPath()
+      context.arc(centerX, centerY, innerRadius, 0, (normalizedMax * Math.PI) / 180)
+      context.stroke()
+      context.beginPath()
+      context.arc(centerX, centerY, outerRadius, 0, (normalizedMax * Math.PI) / 180)
+      context.stroke()
+    } else {
+      context.beginPath()
+      context.arc(centerX, centerY, innerRadius, (normalizedMin * Math.PI) / 180, (normalizedMax * Math.PI) / 180)
+      context.stroke()
+      context.beginPath()
+      context.arc(centerX, centerY, outerRadius, (normalizedMin * Math.PI) / 180, (normalizedMax * Math.PI) / 180)
+      context.stroke()
+    }
+    
+    // Draw angle lines and labels
+    const drawAngleLine = (angleRad: number, radius: number, label: string) => {
+      const endX = centerX + radius * Math.sin(angleRad)
+      const endY = centerY - radius * Math.cos(angleRad)
+      
+      context.beginPath()
+      context.moveTo(centerX, centerY)
+      context.lineTo(endX, endY)
+      context.strokeStyle = fillColor
+      context.lineWidth = 2
+      context.stroke()
+      
+      // Draw angle label with background
+      context.font = '30px Arial'
+      context.textAlign = 'center'
+      context.textBaseline = 'middle'
+      
+      // Position label beyond the line
+      const labelX = endX + 45 * Math.sin(angleRad)
+      const labelY = endY - 45 * Math.cos(angleRad)
+      
+      // Add background for angle label
+      const labelText = `${label}°`
+      const textMetrics = context.measureText(labelText)
+      const padding = 8
+      const bgWidth = textMetrics.width + (padding * 2)
+      const bgHeight = 36
+      
+      context.fillStyle = 'rgba(255, 255, 255, 0.8)'
+      context.fillRect(
+        labelX - (bgWidth / 2),
+        labelY - (bgHeight / 2),
+        bgWidth,
+        bgHeight
+      )
+      
+      context.fillStyle = fillColor
+      context.fillText(labelText, labelX, labelY)
+    }
+    
+    // Draw angle lines with labels
+    if (isBoundaryCrossing) {
+      // Draw min angle line
+      drawAngleLine((normalizedMin * Math.PI) / 180, outerRadius, normalizedMin.toString())
+      // Draw max angle line
+      drawAngleLine((normalizedMax * Math.PI) / 180, outerRadius, normalizedMax.toString())
+      // Draw 0/360 line
+      drawAngleLine(0, outerRadius, '0')
+      drawAngleLine(2 * Math.PI, outerRadius, '360')
+    } else {
+      drawAngleLine((normalizedMin * Math.PI) / 180, outerRadius, normalizedMin.toString())
+      drawAngleLine((normalizedMax * Math.PI) / 180, outerRadius, normalizedMax.toString())
+    }
+    
+    // Calculate midpoint angle for labels
+    let midAngleRad: number
+    if (isBoundaryCrossing) {
+      const totalAngle = (360 - normalizedMin) + normalizedMax
+      const midAngle = (normalizedMin + (totalAngle / 2)) % 360
+      midAngleRad = (midAngle * Math.PI) / 180
+    } else {
+      midAngleRad = ((normalizedMin + normalizedMax) / 2) * Math.PI / 180
+    }
+    
+    // Draw position name and distance labels
+    context.font = '30px Arial'
+    context.textAlign = 'center'
+    context.textBaseline = 'middle'
+    
+    // Draw distance labels
+    const drawDistanceLabel = (radius: number, label: string) => {
+      const x = centerX + radius * Math.sin(midAngleRad)
+      const y = centerY - radius * Math.cos(midAngleRad)
+      const metrics = context.measureText(label)
+      
+      context.fillStyle = 'rgba(255, 255, 255, 0.8)'
+      context.fillRect(
+        x - (metrics.width / 2) - 8,
+        y - 18,
+        metrics.width + 16,
+        36
+      )
+      context.fillStyle = fillColor
+      context.fillText(label, x, y)
+    }
+    
+    drawDistanceLabel(innerRadius, `${distance.min}yd`)
+    drawDistanceLabel(outerRadius, `${distance.max}yd`)
+    
+    // Draw position name
+    const labelRadius = (innerRadius + outerRadius) / 2
+    const labelX = centerX + labelRadius * Math.sin(midAngleRad)
+    const labelY = centerY - labelRadius * Math.cos(midAngleRad)
+    
+    const text = position.name
+    const textMetrics = context.measureText(text)
+    const padding = 12
+    const backgroundWidth = textMetrics.width + (padding * 2)
+    const backgroundHeight = 48
+    
+    context.font = '36px Arial'
+    context.fillStyle = 'rgba(255, 255, 255, 0.8)'
+    context.fillRect(
+      labelX - (backgroundWidth / 2),
+      labelY - (backgroundHeight / 2),
+      backgroundWidth,
+      backgroundHeight
+    )
+    
+    context.fillStyle = fillColor
+    context.fillText(text, labelX, labelY)
+  }
+
   const drawPositions = () => {
     if (!ctx.value || !canvasRef.value) return
     
@@ -194,10 +430,17 @@ export function useCanvas() {
     const centerX = FIELD_DIMENSIONS.CENTER_X
     const centerY = FIELD_DIMENSIONS.CENTER_Y
     
-    // Draw all positions
+    // Draw boundaries for all positions if debug mode is enabled
+    if (showDebugBoundaries.value) {
+      FIELDING_POSITIONS.forEach(position => {
+        drawPositionBoundary(position, centerX, centerY)
+      })
+    }
+    
+    // Draw only the active fielders
     positions.value.forEach(position => {
       const cartesian = polarToCartesian(position.polar, centerX, centerY)
-      drawFielder(cartesian.x, cartesian.y, getPositionColor(position.type), position.id, position.name)
+      drawFielder(cartesian.x, cartesian.y, getPositionColor(position.type, position.side), position.id, position.name)
     })
   }
 
@@ -245,90 +488,88 @@ export function useCanvas() {
     }
   }
 
-  const getPositionColor = (type: FieldingPosition['type']) => {
-    switch (type) {
-      case 'mandatory':
-        return '#2ecc71'
-      case 'primary':
-        return '#e74c3c'
-      case 'variation':
-        return '#f39c12'
-      default:
-        return '#3498db'
-    }
-  }
-
-  const handleMouseDown = (event: MouseEvent) => {
-    if (!canvasRef.value) return
+  const getCanvasCoordinates = (event: MouseEvent) => {
+    if (!canvasRef.value) return null
     
     const canvas = canvasRef.value
     const rect = canvas.getBoundingClientRect()
     const scaleX = canvas.width / rect.width
     const scaleY = canvas.height / rect.height
     
-    const x = (event.clientX - rect.left) * scaleX
-    const y = (event.clientY - rect.top) * scaleY
+    return {
+      x: (event.clientX - rect.left) * scaleX,
+      y: (event.clientY - rect.top) * scaleY
+    }
+  }
+
+  const handleMouseDown = (event: MouseEvent) => {
+    const coords = getCanvasCoordinates(event)
+    if (!coords) return
     
-    const clickedPosition = findClickedPosition(x, y)
+    const clickedPosition = findClickedPosition(coords.x, coords.y)
     if (clickedPosition) {
       isDragging.value = true
+      isFielderDrag.value = true
       selectedPosition.value = clickedPosition
       
       // Calculate drag offset
       const cartesian = polarToCartesian(clickedPosition.polar, FIELD_DIMENSIONS.CENTER_X, FIELD_DIMENSIONS.CENTER_Y)
       dragOffset.value = {
-        x: x - cartesian.x,
-        y: y - cartesian.y
+        x: coords.x - cartesian.x,
+        y: coords.y - cartesian.y
       }
-      
-      redraw()
+    } else {
+      isFielderDrag.value = false
     }
+    
+    redraw()
   }
 
   const handleMouseMove = (event: MouseEvent) => {
-    if (!isDragging.value || !selectedPosition.value || !canvasRef.value) return
+    const coords = getCanvasCoordinates(event)
+    if (!coords) return
+
+    // Add point to trail
+    addPoint(coords.x, coords.y)
     
-    const canvas = canvasRef.value
-    const rect = canvas.getBoundingClientRect()
-    const scaleX = canvas.width / rect.width
-    const scaleY = canvas.height / rect.height
-    
-    const x = (event.clientX - rect.left) * scaleX - dragOffset.value.x
-    const y = (event.clientY - rect.top) * scaleY - dragOffset.value.y
-    
-    const centerX = FIELD_DIMENSIONS.CENTER_X
-    const centerY = FIELD_DIMENSIONS.CENTER_Y
-    
-    // Convert mouse position to coordinates relative to center
-    const cartesian = {
-      x: x - centerX,
-      y: y - centerY
-    }
-    
-    // Calculate distance from center
-    const distanceFromCenter = Math.sqrt(cartesian.x * cartesian.x + cartesian.y * cartesian.y)
-    const maxDistance = FIELD_DIMENSIONS.BOUNDARY_RADIUS * FIELD_DIMENSIONS.PIXELS_PER_YARD
-    
-    // If outside boundary, scale position to boundary
-    if (distanceFromCenter > maxDistance) {
-      const scale = maxDistance / distanceFromCenter
-      cartesian.x *= scale
-      cartesian.y *= scale
-    }
-    
-    // Convert to polar coordinates
-    const polar = cartesianToPolar(cartesian, 0, 0)
-    
-    // Find closest standard position to get the name
-    const closestPosition = findClosestPosition(polar)
-    
-    // Update the position
-    const positionIndex = positions.value.findIndex(p => p.id === selectedPosition.value?.id)
-    if (positionIndex !== -1) {
-      positions.value[positionIndex] = {
-        ...positions.value[positionIndex],
-        polar,
-        name: closestPosition?.name || positions.value[positionIndex].name
+    if (isDragging.value && selectedPosition.value) {
+      const adjustedX = coords.x - dragOffset.value.x
+      const adjustedY = coords.y - dragOffset.value.y
+      
+      const centerX = FIELD_DIMENSIONS.CENTER_X
+      const centerY = FIELD_DIMENSIONS.CENTER_Y
+      
+      // Convert mouse position to coordinates relative to center
+      const cartesian = {
+        x: adjustedX - centerX,
+        y: adjustedY - centerY
+      }
+      
+      // Calculate distance from center
+      const distanceFromCenter = Math.sqrt(cartesian.x * cartesian.x + cartesian.y * cartesian.y)
+      const maxDistance = FIELD_DIMENSIONS.BOUNDARY_RADIUS * FIELD_DIMENSIONS.PIXELS_PER_YARD
+      
+      // If outside boundary, scale position to boundary
+      if (distanceFromCenter > maxDistance) {
+        const scale = maxDistance / distanceFromCenter
+        cartesian.x *= scale
+        cartesian.y *= scale
+      }
+      
+      // Convert to polar coordinates
+      const polar = cartesianToPolar(cartesian, 0, 0)
+      
+      // Find closest standard position to get the name
+      const closestPosition = findClosestPosition(polar)
+      
+      // Update the position
+      const positionIndex = positions.value.findIndex(p => p.id === selectedPosition.value?.id)
+      if (positionIndex !== -1) {
+        positions.value[positionIndex] = {
+          ...positions.value[positionIndex],
+          polar,
+          name: closestPosition?.name || positions.value[positionIndex].name
+        }
       }
     }
     
@@ -337,8 +578,10 @@ export function useCanvas() {
 
   const handleMouseUp = () => {
     isDragging.value = false
+    isFielderDrag.value = false
     selectedPosition.value = null
     dragOffset.value = { x: 0, y: 0 }
+    clearTrail()
     redraw()
   }
 
@@ -376,6 +619,7 @@ export function useCanvas() {
     positions,
     currentPhase,
     setFieldPhase,
-    initCanvas
+    initCanvas,
+    showDebugBoundaries
   }
 } 

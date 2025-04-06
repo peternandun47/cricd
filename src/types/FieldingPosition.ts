@@ -3,9 +3,15 @@ export interface CartesianCoordinate {
   y: number;
 }
 
+export interface Range {
+  min: number;
+  max: number;
+  preferred?: number;  // Optional preferred value within the range
+}
+
 export interface PolarCoordinate {
-  distance: number;  // percentage of field radius (0-100)
-  angle: number;    // degrees (0-360)
+  distance: Range;  // percentage of field radius (0-100)
+  angle: Range;     // degrees (0-360)
 }
 
 export type FieldingSide = 'off' | 'leg' | 'neutral';

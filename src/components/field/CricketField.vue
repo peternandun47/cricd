@@ -10,6 +10,13 @@
       >
         {{ phase.label }}
       </button>
+      <button 
+        class="debug-toggle"
+        :class="{ active: showDebugBoundaries }"
+        @click="toggleDebugBoundaries"
+      >
+        {{ showDebugBoundaries ? 'Hide Boundaries' : 'Show Boundaries' }}
+      </button>
     </div>
     <div class="cricket-field-wrapper">
       <canvas
@@ -29,7 +36,15 @@ import { onMounted, watch, ref } from 'vue'
 import { useCanvas } from '../../composables/useCanvas'
 
 type FieldPhase = 'test_attacking' | 'odi_powerplay' | 'death_overs'
-const { canvasRef, handleMouseDown, handleMouseMove, handleMouseUp, redraw, setFieldPhase } = useCanvas()
+const { 
+  canvasRef, 
+  handleMouseDown, 
+  handleMouseMove, 
+  handleMouseUp, 
+  redraw, 
+  setFieldPhase,
+  showDebugBoundaries 
+} = useCanvas()
 
 const currentPhase = ref<FieldPhase>('odi_powerplay')
 
@@ -42,6 +57,11 @@ const phases = [
 const setPhase = (phase: FieldPhase) => {
   currentPhase.value = phase
   setFieldPhase(phase)
+}
+
+const toggleDebugBoundaries = () => {
+  showDebugBoundaries.value = !showDebugBoundaries.value
+  redraw()
 }
 
 watch(canvasRef, () => {
@@ -145,5 +165,33 @@ onMounted(() => {
   image-rendering: crisp-edges;
   background-color: transparent;
   mix-blend-mode: multiply;
+}
+
+.debug-toggle {
+  margin-top: 1rem;
+  padding: 0.5rem 1rem;
+  border: 2px solid #e74c3c;
+  border-radius: 6px;
+  background-color: white;
+  color: #e74c3c;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+  transition: all 0.3s ease;
+  white-space: nowrap;
+  text-align: center;
+  width: 100%;
+}
+
+.debug-toggle:hover {
+  background-color: #e74c3c;
+  color: white;
+  transform: translateX(-4px);
+}
+
+.debug-toggle.active {
+  background-color: #e74c3c;
+  color: white;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 </style> 
