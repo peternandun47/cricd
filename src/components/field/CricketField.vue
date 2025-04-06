@@ -19,31 +19,35 @@
         {{ showDebugBoundaries ? 'Hide Boundaries' : 'Show Boundaries' }}
       </button>
     </div>
-    <div class="cricket-field-wrapper">
+    <div class="cricket-field-wrapper" :data-mode="currentMode">
       <!-- Base canvas for cricket field -->
       <canvas
         ref="canvasRef"
         class="cricket-field"
-        @mousedown="handleFieldingMouseDown"
-        @mousemove="handleFieldingMouseMove"
-        @mouseup="handleFieldingMouseUp"
-        @mouseleave="handleFieldingMouseUp"
+        @mousedown="handleFieldingInteractionDown"
+        @mousemove="handleFieldingInteractionMove"
+        @mouseup="handleFieldingInteractionUp"
+        @mouseleave="handleFieldingInteractionUp"
       />
       <!-- Overlay canvas for drawing -->
       <canvas
         ref="drawingCanvasRef"
-        class="drawing-canvas"
+        :class="['drawing-canvas', { 'drawing-active': isDrawMode }]"
         @mousedown="handleDrawingMouseDown"
         @mousemove="handleDrawingMouseMove"
         @mouseup="handleDrawingMouseUp"
         @mouseleave="handleDrawingMouseUp"
       />
+      <!-- Mode indicator -->
+      <div class="mode-indicator" @click="toggleMode">
+        {{ currentMode === 'drawing' ? 'Drawing Mode' : 'Fielding Mode' }}
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, watch, ref } from 'vue'
+import { onMounted, watch, ref, computed } from 'vue'
 import { useCanvas } from '../../composables/useCanvas'
 import { useDrawing } from '../../composables/useDrawing'
 import DrawingTools from '../DrawingTools.vue'
@@ -108,7 +112,49 @@ const getDrawingCoordinates = (event: MouseEvent) => {
   }
 }
 
+// Mouse event handlers for fielding
+const getFieldingCoordinates = (event: MouseEvent) => {
+  if (!canvasRef.value) return null
+  
+  const canvas = canvasRef.value
+  const rect = canvas.getBoundingClientRect()
+  const scaleX = canvas.width / rect.width
+  const scaleY = canvas.height / rect.height
+  
+  return {
+    x: (event.clientX - rect.left) * scaleX,
+    y: (event.clientY - rect.top) * scaleY
+  }
+}
+
+// Drawing mode state
+const isDrawMode = ref(false)
+
+// Toggle between drawing and fielding modes
+const toggleMode = () => {
+  isDrawMode.value = !isDrawMode.value
+  if (!isDrawMode.value) {
+    // Reset drawing tool when switching to fielding mode
+    if (drawingToolsRef.value) {
+      drawingToolsRef.value.currentTool = 'none'
+    }
+  }
+}
+
+// Watch for tool changes
+watch(() => drawingToolsRef.value?.currentTool, (newTool) => {
+  if (newTool) {
+    currentTool.value = newTool
+    isDrawMode.value = newTool !== 'none'
+  }
+})
+
+// Update the template to show current mode
+const currentMode = computed(() => isDrawMode.value ? 'drawing' : 'fielding')
+
 const handleDrawingMouseDown = (event: MouseEvent) => {
+  if (!isDrawMode.value) return
+  
   const coords = getDrawingCoordinates(event)
   if (!coords) return
   
@@ -120,6 +166,8 @@ const handleDrawingMouseDown = (event: MouseEvent) => {
 }
 
 const handleDrawingMouseMove = (event: MouseEvent) => {
+  if (!isDrawMode.value) return
+  
   const coords = getDrawingCoordinates(event)
   if (!coords) return
   
@@ -129,7 +177,26 @@ const handleDrawingMouseMove = (event: MouseEvent) => {
 }
 
 const handleDrawingMouseUp = () => {
+  if (!isDrawMode.value) return
   stopDrawing()
+}
+
+// Fielding state
+const isFieldingActive = ref(false)
+
+const handleFieldingInteractionDown = (event: MouseEvent) => {
+  if (isDrawMode.value) return
+  handleFieldingMouseDown(event)
+}
+
+const handleFieldingInteractionMove = (event: MouseEvent) => {
+  if (isDrawMode.value) return
+  handleFieldingMouseMove(event)
+}
+
+const handleFieldingInteractionUp = () => {
+  if (isDrawMode.value) return
+  handleFieldingMouseUp()
 }
 
 // Setup and lifecycle
@@ -150,13 +217,6 @@ const toggleDebugBoundaries = () => {
   showDebugBoundaries.value = !showDebugBoundaries.value
   redrawField()
 }
-
-// Watch for tool changes
-watch(() => drawingToolsRef.value?.currentTool, (newTool) => {
-  if (newTool) {
-    currentTool.value = newTool
-  }
-})
 
 onMounted(() => {
   initDrawingCanvas()
@@ -266,6 +326,11 @@ onMounted(() => {
   height: 100%;
   cursor: crosshair;
   z-index: 2;
+  pointer-events: none;
+}
+
+.drawing-canvas.drawing-active {
+  pointer-events: auto;
 }
 
 .debug-toggle {
@@ -294,5 +359,37 @@ onMounted(() => {
   background-color: #e74c3c;
   color: white;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Update mode indicator styles */
+.mode-indicator {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background-color: rgba(255, 255, 255, 0.9);
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  font-weight: 600;
+  z-index: 3;
+  color: #2c3e50;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  user-select: none;
+}
+
+.mode-indicator:hover {
+  background-color: #2c3e50;
+  color: white;
+  transform: translateY(-2px);
+}
+
+/* Remove the old mode indicator styles */
+.cricket-field-wrapper::after {
+  display: none;
+}
+
+.cricket-field-wrapper[data-mode="drawing"]::after,
+.cricket-field-wrapper[data-mode="fielding"]::after {
+  display: none;
 }
 </style> 
