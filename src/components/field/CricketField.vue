@@ -1,6 +1,7 @@
 <template>
   <div class="cricket-field-container">
     <img src="/images/cric.png" class="background-image" alt="Cricket field background" />
+    <DrawingTools ref="drawingToolsRef" @reset="clearDrawing" />
     <div class="phase-selector">
       <button 
         v-for="phase in phases" 
@@ -19,13 +20,23 @@
       </button>
     </div>
     <div class="cricket-field-wrapper">
+      <!-- Base canvas for cricket field -->
       <canvas
         ref="canvasRef"
         class="cricket-field"
-        @mousedown="handleMouseDown"
-        @mousemove="handleMouseMove"
-        @mouseup="handleMouseUp"
-        @mouseleave="handleMouseUp"
+        @mousedown="handleFieldingMouseDown"
+        @mousemove="handleFieldingMouseMove"
+        @mouseup="handleFieldingMouseUp"
+        @mouseleave="handleFieldingMouseUp"
+      />
+      <!-- Overlay canvas for drawing -->
+      <canvas
+        ref="drawingCanvasRef"
+        class="drawing-canvas"
+        @mousedown="handleDrawingMouseDown"
+        @mousemove="handleDrawingMouseMove"
+        @mouseup="handleDrawingMouseUp"
+        @mouseleave="handleDrawingMouseUp"
       />
     </div>
   </div>
@@ -34,18 +45,94 @@
 <script setup lang="ts">
 import { onMounted, watch, ref } from 'vue'
 import { useCanvas } from '../../composables/useCanvas'
+import { useDrawing } from '../../composables/useDrawing'
+import DrawingTools from '../DrawingTools.vue'
 
 type FieldPhase = 'test_attacking' | 'odi_powerplay' | 'death_overs'
+
+// Cricket field canvas setup
 const { 
   canvasRef, 
-  handleMouseDown, 
-  handleMouseMove, 
-  handleMouseUp, 
-  redraw, 
+  redraw: redrawField, 
   setFieldPhase,
-  showDebugBoundaries 
+  showDebugBoundaries,
+  handleMouseDown: handleFieldingMouseDown,
+  handleMouseMove: handleFieldingMouseMove,
+  handleMouseUp: handleFieldingMouseUp,
 } = useCanvas()
 
+// Drawing canvas setup
+const drawingCanvasRef = ref<HTMLCanvasElement | null>(null)
+const drawingCtx = ref<CanvasRenderingContext2D | null>(null)
+const drawingToolsRef = ref<InstanceType<typeof DrawingTools> | null>(null)
+
+// Initialize drawing canvas
+const initDrawingCanvas = () => {
+  if (!drawingCanvasRef.value) return
+  
+  const canvas = drawingCanvasRef.value
+  const context = canvas.getContext('2d')
+  
+  if (!context) return
+  
+  // Match canvas size with cricket field canvas
+  canvas.width = 1500 // Match FIELD_DIMENSIONS.CANVAS_WIDTH
+  canvas.height = 1500 // Match FIELD_DIMENSIONS.CANVAS_HEIGHT
+  
+  drawingCtx.value = context
+}
+
+// Drawing functionality
+const { 
+  currentTool, 
+  startDrawing, 
+  draw, 
+  stopDrawing, 
+  isDrawing,
+  eraseShape,
+  clearDrawing
+} = useDrawing(drawingCtx)
+
+// Mouse event handlers for drawing
+const getDrawingCoordinates = (event: MouseEvent) => {
+  if (!drawingCanvasRef.value) return null
+  
+  const canvas = drawingCanvasRef.value
+  const rect = canvas.getBoundingClientRect()
+  const scaleX = canvas.width / rect.width
+  const scaleY = canvas.height / rect.height
+  
+  return {
+    x: (event.clientX - rect.left) * scaleX,
+    y: (event.clientY - rect.top) * scaleY
+  }
+}
+
+const handleDrawingMouseDown = (event: MouseEvent) => {
+  const coords = getDrawingCoordinates(event)
+  if (!coords) return
+  
+  if (currentTool.value === 'erase') {
+    eraseShape(coords.x, coords.y)
+  } else {
+    startDrawing(coords.x, coords.y)
+  }
+}
+
+const handleDrawingMouseMove = (event: MouseEvent) => {
+  const coords = getDrawingCoordinates(event)
+  if (!coords) return
+  
+  if (isDrawing.value) {
+    draw(coords.x, coords.y)
+  }
+}
+
+const handleDrawingMouseUp = () => {
+  stopDrawing()
+}
+
+// Setup and lifecycle
 const currentPhase = ref<FieldPhase>('odi_powerplay')
 
 const phases = [
@@ -61,17 +148,19 @@ const setPhase = (phase: FieldPhase) => {
 
 const toggleDebugBoundaries = () => {
   showDebugBoundaries.value = !showDebugBoundaries.value
-  redraw()
+  redrawField()
 }
 
-watch(canvasRef, () => {
-  if (canvasRef.value) {
-    redraw()
+// Watch for tool changes
+watch(() => drawingToolsRef.value?.currentTool, (newTool) => {
+  if (newTool) {
+    currentTool.value = newTool
   }
 })
 
 onMounted(() => {
-  redraw()
+  initDrawingCanvas()
+  redrawField()
 })
 </script>
 
@@ -159,12 +248,24 @@ onMounted(() => {
 }
 
 .cricket-field {
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 100%;
   height: 100%;
-  cursor: pointer;
   image-rendering: crisp-edges;
   background-color: transparent;
   mix-blend-mode: multiply;
+}
+
+.drawing-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  z-index: 2;
 }
 
 .debug-toggle {
